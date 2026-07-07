@@ -1,0 +1,7 @@
+[INSERT YOUR RESUME TEXT HERE]
+
+Example:
+John Doe
+Software Engineer
+Skills: Python, Google Cloud, AI
+Experience: Intern at Tech Corp

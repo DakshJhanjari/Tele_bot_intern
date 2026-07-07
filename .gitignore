@@ -1,0 +1,31 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment / Secrets — NEVER commit these
+.env
+credentials.json
+token.json
+
+# Logs
+*.log
+
+# Large dev binaries
+cloudflared.exe
+gcloud.zip
+google-cloud-sdk/
+
+# Dev-only tunnel scripts
+proxy.py
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,34 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+
+# --- Environment ---
+.env
+*.log
+
+# --- Credentials (never bake secrets into the image) ---
+credentials.json
+token.json
+
+# --- Dev-only scripts (not needed at runtime) ---
+proxy.py
+fix.py
+generate_token.py
+
+# --- Resume (fetched at runtime from RESUME_GIST_URL, not baked in) ---
+resume.txt
+
+# --- Render config (read from repo root by Render, not needed in image) ---
+render.yaml
+
+# --- Large binaries / SDKs (not part of the application) ---
+cloudflared.exe
+gcloud.zip
+google-cloud-sdk/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

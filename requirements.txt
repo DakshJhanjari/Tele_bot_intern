@@ -1,0 +1,10 @@
+fastapi==0.110.1
+uvicorn==0.29.0
+google-api-python-client==2.124.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+requests==2.31.0
+python-multipart==0.0.9
+pydantic==2.7.0
+google-genai==1.16.0
+python-dotenv==1.0.1

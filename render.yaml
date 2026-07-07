@@ -1,0 +1,28 @@
+﻿services:
+  - type: web
+    name: cold-emailer-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Health check — Render uses this to confirm the service is up
+    healthCheckPath: /
+    envVars:
+      # ── Telegram ──────────────────────────────────────────────────────────
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false        # secret — set value in Render dashboard
+
+      # ── Gemini AI ─────────────────────────────────────────────────────────
+      - key: GEMINI_API_KEY
+        sync: false        # secret — set value in Render dashboard
+
+      # ── Gmail OAuth ───────────────────────────────────────────────────────
+      - key: GMAIL_CLIENT_ID
+        sync: false        # secret — set value in Render dashboard
+      - key: GMAIL_CLIENT_SECRET
+        sync: false        # secret — set value in Render dashboard
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false        # secret — set value in Render dashboard
+
+      # ── Resume ────────────────────────────────────────────────────────────
+      - key: RESUME_GIST_URL
+        sync: false        # e.g. https://gist.githubusercontent.com/YOU/ID/raw/resume.txt
