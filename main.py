@@ -1,5 +1,6 @@
 import logging
 import traceback
+import requests
 
 from dotenv import load_dotenv
 
@@ -23,6 +24,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+async def set_telegram_webhook():
+    """Auto-register the Telegram webhook on startup using Render's external URL."""
+    import os
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")  # Injected automatically by Render
+
+    if not token:
+        logger.warning("TELEGRAM_BOT_TOKEN not set — skipping webhook registration.")
+        return
+    if not render_url:
+        logger.info("RENDER_EXTERNAL_URL not set — skipping webhook registration (local dev mode).")
+        return
+
+    webhook_url = f"{render_url}/webhook"
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            logger.info("Telegram webhook registered: %s", webhook_url)
+        else:
+            logger.error("Failed to set webhook: %s", data)
+    except Exception:
+        logger.exception("Exception while registering Telegram webhook")
 
 
 @app.post("/webhook")
