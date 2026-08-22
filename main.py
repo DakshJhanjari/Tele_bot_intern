@@ -12,6 +12,8 @@ from fastapi import FastAPI, Request  # noqa: E402
 from ai_agent import generate_email_draft  # noqa: E402
 from gmail_integration import create_draft  # noqa: E402
 from telegram_integration import send_message, download_file  # noqa: E402
+from a2a_protocol import AGENT_CARD  # noqa: E402
+from a2a_router import router as a2a_router  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging — structured timestamps and log levels visible in Cloud Run logs
@@ -25,11 +27,28 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Mount the A2A protocol router
+app.include_router(a2a_router)
+
 
 @app.on_event("startup")
-async def set_telegram_webhook():
-    """Auto-register the Telegram webhook on startup using Render's external URL."""
+async def on_startup():
+    """Run startup tasks: register Telegram webhook and populate A2A agent card URL."""
     import os
+
+    # --- Populate the A2A agent card URL ---
+    base_url = (
+        os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("BASE_URL")
+        or ""
+    )
+    AGENT_CARD["url"] = base_url.rstrip("/")
+    if base_url:
+        logger.info("A2A agent card URL set to: %s", AGENT_CARD["url"])
+    else:
+        logger.info("BASE_URL / RENDER_EXTERNAL_URL not set — A2A agent card URL is empty.")
+
+    # --- Register Telegram webhook ---
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     render_url = os.environ.get("RENDER_EXTERNAL_URL")  # Injected automatically by Render
 

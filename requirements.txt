@@ -8,3 +8,4 @@ python-multipart==0.0.9
 pydantic==2.7.0
 google-genai==1.16.0
 python-dotenv==1.0.1
+sse-starlette==2.1.0
