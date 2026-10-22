@@ -27,11 +27,12 @@ class DraftResponse(BaseModel):
 _client: genai.Client | None = None
 _resume_cache: str | None = None
 
-# Fallback models in priority order to handle Google 503 capacity spikes
+# Active Gemini models: gemini-3.8-flash and 3.5 models are the current primary models
 FALLBACK_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-1.5-flash",
 ]
 
 
@@ -106,8 +107,8 @@ def generate_email_draft(
 ) -> DraftResponse:
     """Generate a tailored cold-email draft from a job description or startup profile.
 
-    Automatically retries with backoff and falls back across candidate models
-    if Google encounters a temporary 503 capacity spike.
+    Uses current active models (gemini-3.8-flash, gemini-3.5-flash, gemini-3.5-flash-lite)
+    with automatic retry and graceful fallback.
 
     Args:
         job_description_text: Plain-text job description or startup research.
@@ -147,18 +148,16 @@ def generate_email_draft(
             except Exception as exc:
                 last_error = exc
                 err_str = str(exc)
-                # Check for 503 (high demand) or 429 (rate limit / resource exhausted)
-                if any(x in err_str for x in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "high demand")):
+                if any(x in err_str for x in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "high demand", "404", "NOT_FOUND")):
                     logger.warning(
-                        "Model %s capacity spike: %s. Retrying attempt %d...",
+                        "Model %s error (%s). Trying fallback...",
                         model_name,
                         err_str[:120],
-                        attempt + 1,
                     )
-                    time.sleep(1.5)
-                    continue
+                    time.sleep(1)
+                    break  # Move immediately to next candidate model
                 else:
                     logger.warning("Generation error on %s: %s", model_name, exc)
-                    break  # Try next model in FALLBACK_MODELS
+                    break
 
     raise last_error or RuntimeError("Failed to generate draft across all fallback models.")
