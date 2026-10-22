@@ -1,8 +1,12 @@
+import logging
 import os
+import time
 import requests
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -22,6 +26,13 @@ class DraftResponse(BaseModel):
 
 _client: genai.Client | None = None
 _resume_cache: str | None = None
+
+# Fallback models in priority order to handle Google 503 capacity spikes
+FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-1.5-flash",
+]
 
 
 def _get_client() -> genai.Client:
@@ -61,24 +72,26 @@ Here is the candidate's resume:
 {resume}
 ---
 
-Your task is to analyze the provided job description and write a tailored, \
-compelling cold email to the hiring manager/recruiter.
+Your task is to analyze the provided job description or startup research profile and write a tailored, \
+compelling cold email to the hiring manager/recruiter/founder.
 
 Rules for the email:
 1. NO FLUFF. Do not use generic openings like "I hope this email finds you \
 well," or "I am writing to apply for...". Start directly with a strong hook.
 2. Keep it incredibly concise (under 150 words). Recruiters skim.
 3. Focus purely on VALUE. Connect 1-2 specific achievements from the resume \
-directly to the core needs in the job description.
-4. Use bullet points if necessary to make it scannable.
-5. End with a low-friction call to action (e.g., "Are you open to a brief \
+directly to the core needs in the job description or startup's mission.
+4. If startup funding, mission, or specific role fit (e.g. AI Automation, Founder's Office, PM) is mentioned, \
+reference it naturally to show genuine research.
+5. Use bullet points if necessary to make it scannable.
+6. End with a low-friction call to action (e.g., "Are you open to a brief \
 chat next week?").
-6. The tone must be confident, professional, and slightly conversational. \
+7. The tone must be confident, professional, and slightly conversational. \
 Never sound desperate or robotic.
-7. The subject line must be catchy, short, and highly relevant (e.g., \
+8. The subject line must be catchy, short, and highly relevant (e.g., \
 avoiding generic "Application for [Role]").
 
-If you can find an email address belonging to the recruiter or hiring manager \
+If you can find an email address belonging to the recruiter, hiring manager, or founder \
 in the text or image, extract it into the recruiter_email field. \
 Otherwise, leave it blank.
 """
@@ -91,11 +104,13 @@ Otherwise, leave it blank.
 def generate_email_draft(
     job_description_text: str = "", image_bytes: bytes | None = None
 ) -> DraftResponse:
-    """Generate a tailored cold-email draft from a job description.
+    """Generate a tailored cold-email draft from a job description or startup profile.
+
+    Automatically retries with backoff and falls back across candidate models
+    if Google encounters a temporary 503 capacity spike.
 
     Args:
-        job_description_text: Plain-text job description (may be empty if an
-            image is provided instead).
+        job_description_text: Plain-text job description or startup research.
         image_bytes: Raw bytes of a job-description screenshot (optional).
 
     Returns:
@@ -106,7 +121,7 @@ def generate_email_draft(
 
     prompt = _SYSTEM_PROMPT.format(resume=resume_text)
     if job_description_text:
-        prompt += f"\n\nJob Description Text provided:\n{job_description_text}"
+        prompt += f"\n\nJob Description / Company Profile provided:\n{job_description_text}"
 
     content: list = [prompt]
     if image_bytes:
@@ -114,13 +129,36 @@ def generate_email_draft(
             types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         )
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=content,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=DraftResponse,
-        ),
-    )
+    last_error: Exception | None = None
 
-    return DraftResponse.model_validate_json(response.text)
+    for model_name in FALLBACK_MODELS:
+        for attempt in range(2):
+            try:
+                logger.info("Attempting generation with model: %s (attempt %d/2)", model_name, attempt + 1)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=content,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=DraftResponse,
+                    ),
+                )
+                return DraftResponse.model_validate_json(response.text)
+            except Exception as exc:
+                last_error = exc
+                err_str = str(exc)
+                # Check for 503 (high demand) or 429 (rate limit / resource exhausted)
+                if any(x in err_str for x in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "high demand")):
+                    logger.warning(
+                        "Model %s capacity spike: %s. Retrying attempt %d...",
+                        model_name,
+                        err_str[:120],
+                        attempt + 1,
+                    )
+                    time.sleep(1.5)
+                    continue
+                else:
+                    logger.warning("Generation error on %s: %s", model_name, exc)
+                    break  # Try next model in FALLBACK_MODELS
+
+    raise last_error or RuntimeError("Failed to generate draft across all fallback models.")
