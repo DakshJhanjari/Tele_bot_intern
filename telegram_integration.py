@@ -32,18 +32,112 @@ def _api_url(method: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def send_message(chat_id: int, text: str) -> dict:
+def send_message(
+    chat_id: int,
+    text: str,
+    parse_mode: str | None = "Markdown",
+    reply_markup: dict | None = None,
+) -> dict:
     """Send a text message to *chat_id* via the Telegram Bot API.
 
     Args:
         chat_id: Target chat identifier.
-        text: Message text (supports Telegram Markdown).
+        text: Message text.
+        parse_mode: Parsing mode ('Markdown', 'HTML', or None).
+        reply_markup: Optional inline keyboard or reply markup dictionary.
 
     Returns:
         Parsed JSON response from the Telegram API.
     """
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    payload: dict = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
     response = requests.post(_api_url("sendMessage"), json=payload, timeout=10)
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        # If Markdown parsing fails due to unescaped characters in AI draft, retry as plain text
+        if parse_mode and response.status_code == 400 and "can't parse entities" in response.text:
+            logger.warning("Telegram parse error, retrying without parse_mode: %s", response.text)
+            payload.pop("parse_mode", None)
+            retry_res = requests.post(_api_url("sendMessage"), json=payload, timeout=10)
+            retry_res.raise_for_status()
+            return retry_res.json()
+        raise exc
+
+    return response.json()
+
+
+def edit_message_text(
+    chat_id: int,
+    message_id: int,
+    text: str,
+    parse_mode: str | None = "Markdown",
+    reply_markup: dict | None = None,
+) -> dict:
+    """Edit an existing message text in *chat_id*.
+
+    Args:
+        chat_id: Target chat identifier.
+        message_id: Identifier of the message to edit.
+        text: New message text.
+        parse_mode: Parsing mode ('Markdown', 'HTML', or None).
+        reply_markup: Optional new inline keyboard, or empty dict/None to remove.
+
+    Returns:
+        Parsed JSON response from the Telegram API.
+    """
+    payload: dict = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
+    response = requests.post(_api_url("editMessageText"), json=payload, timeout=10)
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        if parse_mode and response.status_code == 400 and "can't parse entities" in response.text:
+            logger.warning("Telegram edit parse error, retrying without parse_mode: %s", response.text)
+            payload.pop("parse_mode", None)
+            retry_res = requests.post(_api_url("editMessageText"), json=payload, timeout=10)
+            retry_res.raise_for_status()
+            return retry_res.json()
+        raise exc
+
+    return response.json()
+
+
+def answer_callback_query(
+    callback_query_id: str,
+    text: str | None = None,
+    show_alert: bool = False,
+) -> dict:
+    """Acknowledge a callback query from an inline keyboard button.
+
+    Args:
+        callback_query_id: Unique identifier for the query to be answered.
+        text: Text of the notification displayed to the user.
+        show_alert: If true, an alert will be shown by the client instead of a notification.
+
+    Returns:
+        Parsed JSON response from the Telegram API.
+    """
+    payload: dict = {
+        "callback_query_id": callback_query_id,
+        "show_alert": show_alert,
+    }
+    if text:
+        payload["text"] = text
+
+    response = requests.post(_api_url("answerCallbackQuery"), json=payload, timeout=10)
     response.raise_for_status()
     return response.json()
 

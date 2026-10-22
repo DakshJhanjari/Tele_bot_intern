@@ -70,3 +70,32 @@ def create_draft(subject: str, body: str, to_email: str = "") -> dict:
     draft = service.users().drafts().create(userId="me", body=create_body).execute()
     logger.info("Draft created successfully (id=%s).", draft["id"])
     return draft
+
+
+def send_email(subject: str, body: str, to_email: str) -> dict:
+    """Send an email directly from the authenticated user's Gmail account.
+
+    Args:
+        subject: Email subject line.
+        body: Plain-text email body.
+        to_email: Recipient address.
+
+    Returns:
+        The Gmail API message resource dict (contains message ``id``).
+    """
+    if not to_email or not to_email.strip():
+        raise ValueError("A recipient email address (to_email) is required to send an email.")
+
+    service = get_gmail_service()
+
+    message = EmailMessage()
+    message.set_content(body)
+    message["Subject"] = subject
+    message["To"] = to_email.strip()
+
+    encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    send_body = {"raw": encoded_message}
+
+    sent = service.users().messages().send(userId="me", body=send_body).execute()
+    logger.info("Email sent successfully (id=%s, to=%s).", sent["id"], to_email)
+    return sent
