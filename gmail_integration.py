@@ -5,6 +5,8 @@ from email.message import EmailMessage
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from google_auth_httplib2 import AuthorizedHttp
+import httplib2
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,9 @@ def _get_credentials() -> Credentials:
 
 def get_gmail_service():
     """Return a Gmail API service using cached OAuth credentials."""
-    return build("gmail", "v1", credentials=_get_credentials())
+    http = AuthorizedHttp(_get_credentials(), http=httplib2.Http(
+        timeout=float(os.environ.get("GMAIL_REQUEST_TIMEOUT_SECONDS", "20"))))
+    return build("gmail", "v1", http=http, cache_discovery=False)
 
 
 # ---------------------------------------------------------------------------

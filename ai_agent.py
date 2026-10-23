@@ -27,13 +27,13 @@ class DraftResponse(BaseModel):
 _client: genai.Client | None = None
 _resume_cache: str | None = None
 
-# Active Gemini models: gemini-3.8-flash and 3.5 models are the current primary models
-FALLBACK_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
+# Stable defaults with a configured primary model when provided.
+FALLBACK_MODELS = list(dict.fromkeys(filter(None, [
+    os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+    "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
-]
+])))
+
 
 
 def _get_client() -> genai.Client:
@@ -43,7 +43,8 @@ def _get_client() -> genai.Client:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY is not set.")
-        _client = genai.Client(api_key=api_key)
+        _client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+            timeout=int(os.environ.get("GEMINI_REQUEST_TIMEOUT_MS", "20000"))))
     return _client
 
 
@@ -107,8 +108,7 @@ def generate_email_draft(
 ) -> DraftResponse:
     """Generate a tailored cold-email draft from a job description or startup profile.
 
-    Uses current active models (gemini-3.8-flash, gemini-3.5-flash, gemini-3.5-flash-lite)
-    with automatic retry and graceful fallback.
+    Uses configured/stable Flash models with bounded request timeouts and fallback.
 
     Args:
         job_description_text: Plain-text job description or startup research.

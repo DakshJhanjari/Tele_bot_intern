@@ -19,6 +19,7 @@ import logging
 import os
 
 from fastapi import APIRouter
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from a2a_protocol import (
@@ -111,7 +112,7 @@ async def a2a_endpoint(request_body: dict):
 async def _handle_tasks_send(rpc_id, params: dict):
     """Handle synchronous task execution."""
     try:
-        task = _handler.handle_send(params)
+        task = await run_in_threadpool(_handler.handle_send, params)
         return JSONResponse(content={
             "jsonrpc": "2.0",
             "id": rpc_id,
