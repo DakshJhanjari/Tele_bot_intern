@@ -187,7 +187,7 @@ class A2AHandler:
         """Handle a synchronous ``tasks/send`` request."""
         task = self._init_task(params)
         save_task(task)
-        self._execute(task)
+        self._execute(task, save_draft=params.get("save_draft", True) is not False)
         save_task(task)
         return task
 
@@ -257,7 +257,7 @@ class A2AHandler:
         )
         return task
 
-    def _execute(self, task: Task) -> None:
+    def _execute(self, task: Task, save_draft: bool = True) -> None:
         """
         Run the agent logic and update the task in-place.
         Saves the email draft to Gmail and stores a confirmation artifact.
@@ -288,12 +288,8 @@ class A2AHandler:
             logger.info("[A2A] Generating email draft for task %s", task.id)
             draft = generate_email_draft(job_description_text=job_text)
 
-            logger.info("[A2A] Saving Gmail draft for task %s", task.id)
-            create_draft(
-                subject=draft.subject,
-                body=draft.body,
-                to_email=draft.recruiter_email,
-            )
+            if save_draft:
+                create_draft(subject=draft.subject, body=draft.body, to_email=draft.recruiter_email)
 
             to_display = draft.recruiter_email or "[Blank]"
             confirmation_text = (
@@ -308,12 +304,12 @@ class A2AHandler:
                 Artifact(
                     name="email_draft_confirmation",
                     parts=[
-                        TextPart(text=confirmation_text),
+                        TextPart(text=confirmation_text if save_draft else "Email preview ready. Nothing has been saved or sent."),
                         DataPart(data={
                             "subject": draft.subject,
                             "body": draft.body,
                             "recruiter_email": draft.recruiter_email,
-                            "gmail_draft_saved": True,
+                            "gmail_draft_saved": save_draft,
                         }),
                     ],
                 )

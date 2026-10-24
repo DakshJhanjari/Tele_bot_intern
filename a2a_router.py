@@ -91,6 +91,17 @@ async def a2a_endpoint(request_body: dict):
     method = request_body["method"]
     params = request_body.get("params", {})
 
+    if not isinstance(params, dict):
+        return _error_response(rpc_id, _INVALID_PARAMS)
+    # Private extension methods, separate from the standard A2A task methods.
+    if method in ("email/save", "email/send"):
+        from email_actions import perform
+        try:
+            result = await run_in_threadpool(perform, method.split("/")[1], params)
+            return JSONResponse(content={"jsonrpc": "2.0", "id": rpc_id, "result": result})
+        except ValueError as exc:
+            return _error_response(rpc_id, {**_INVALID_PARAMS, "data": str(exc)})
+
     # --- Dispatch ---
     if method == "tasks/send":
         return await _handle_tasks_send(rpc_id, params)
