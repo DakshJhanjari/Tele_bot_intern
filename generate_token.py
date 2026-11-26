@@ -8,6 +8,7 @@ present in the same directory as this script.
 """
 
 from pathlib import Path
+import os
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -24,11 +25,13 @@ def main() -> None:
     flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
     creds = flow.run_local_server(port=0)
 
-    print("\n[SUCCESS] Authentication Successful!\n")
-    print("=" * 50)
-    print("YOUR REFRESH TOKEN IS:")
-    print(creds.refresh_token)
-    print("=" * 50)
+    # Create a private local file, refusing to overwrite an existing token.
+    target = CREDENTIALS_FILE.with_name("token.json")
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as output:
+        output.write(creds.to_json())
+    print("Authentication succeeded. Credentials saved to ignored token.json (owner-only permissions).")
+    print("Transfer the refresh_token securely into your environment settings; do not paste it in chat.")
 
 
 if __name__ == "__main__":

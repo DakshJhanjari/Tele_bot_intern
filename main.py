@@ -1,6 +1,7 @@
 import logging
 import time
-import traceback
+import os
+from security import SecurityMiddleware
 import uuid
 import requests
 
@@ -33,6 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+app.add_middleware(SecurityMiddleware)
 
 # Mount the A2A protocol router
 app.include_router(a2a_router)
@@ -47,13 +49,10 @@ _PENDING_DRAFTS: dict[str, dict] = {}
 def _cleanup_old_drafts():
     """Remove drafts older than 2 hours to keep memory compact."""
     now = time.time()
-    if len(_PENDING_DRAFTS) > 100:
-        expired = [
-            k for k, v in _PENDING_DRAFTS.items()
-            if now - v.get("created_at", 0) > 7200
-        ]
-        for k in expired:
-            _PENDING_DRAFTS.pop(k, None)
+    expired = [k for k, v in _PENDING_DRAFTS.items()
+               if now - v.get("created_at", 0) > 7200]
+    for k in expired:
+        _PENDING_DRAFTS.pop(k, None)
 
 
 def _build_preview_markup(draft_id: str) -> dict:
@@ -97,7 +96,12 @@ async def handle_callback_query(callback_query: dict):
         return {"status": "ignored"}
 
     action, _, draft_id = data.partition(":")
+    _cleanup_old_drafts()
     draft = _PENDING_DRAFTS.get(draft_id)
+    if draft and (draft.get("chat_id") != chat_id or draft.get("actor_id") != callback_query.get("from", {}).get("id")):
+        return {"status": "forbidden"}
+    if draft and draft.get("claimed"):
+        return {"status": "already_processed"}
 
     if not draft and action in ("send", "draft", "regen"):
         answer_callback_query(
@@ -108,9 +112,12 @@ async def handle_callback_query(callback_query: dict):
         return {"status": "expired"}
 
     try:
+        if draft and action in ("send", "draft", "regen", "discard"):
+            draft["claimed"] = True
         if action == "send":
             recruiter_email = draft.get("recruiter_email")
             if not recruiter_email:
+                draft["claimed"] = False
                 answer_callback_query(
                     query_id,
                     text="⚠️ No recruiter email found in the job post! Use 'Save as Draft' to add the recipient in Gmail.",
@@ -173,6 +180,7 @@ async def handle_callback_query(callback_query: dict):
                 new_preview,
                 reply_markup=_build_preview_markup(draft_id),
             )
+            draft["claimed"] = False
             return {"status": "ok"}
 
         elif action == "discard":
@@ -186,9 +194,9 @@ async def handle_callback_query(callback_query: dict):
             return {"status": "unknown_action"}
 
     except Exception as exc:
-        logger.exception("Error handling callback query action=%s: %s", action, exc)
-        answer_callback_query(query_id, text=f"❌ Error: {exc}", show_alert=True)
-        return {"status": "error", "reason": str(exc)}
+        logger.error("Callback failed (%s)", type(exc).__name__)
+        answer_callback_query(query_id, text="❌ Action failed. Check Gmail before trying again.", show_alert=True)
+        return {"status": "error", "reason": "Action failed"}
 
 
 @app.on_event("startup")
@@ -219,20 +227,24 @@ async def on_startup():
         logger.info("RENDER_EXTERNAL_URL not set — skipping webhook registration (local dev mode).")
         return
 
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+    if not secret:
+        logger.error("TELEGRAM_WEBHOOK_SECRET missing; refusing webhook registration")
+        return
     webhook_url = f"{render_url}/webhook"
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{token}/setWebhook",
-            json={"url": webhook_url},
+            json={"url": webhook_url, "secret_token": secret},
             timeout=10,
         )
         data = resp.json()
         if data.get("ok"):
             logger.info("Telegram webhook registered: %s", webhook_url)
         else:
-            logger.error("Failed to set webhook: %s", data)
+            logger.error("Failed to set webhook")
     except Exception:
-        logger.exception("Exception while registering Telegram webhook")
+        logger.error("Exception while registering Telegram webhook")
 
 
 @app.post("/webhook")
@@ -293,13 +305,17 @@ async def telegram_webhook(request: Request):
 
         # 2. Store in pending drafts for button interactions
         _cleanup_old_drafts()
-        draft_id = uuid.uuid4().hex[:8]
+        draft_id = uuid.uuid4().hex
+        if len(_PENDING_DRAFTS) >= 1000:
+            raise ValueError("Too many pending drafts")
         _PENDING_DRAFTS[draft_id] = {
             "subject": draft_response.subject,
             "body": draft_response.body,
             "recruiter_email": draft_response.recruiter_email,
             "job_text": job_text,
             "created_at": time.time(),
+            "chat_id": chat_id,
+            "actor_id": message.get("from", {}).get("id"),
         }
 
         # 3. Present preview with interactive action buttons
@@ -314,13 +330,13 @@ async def telegram_webhook(request: Request):
         return {"status": "ok"}
 
     except Exception as e:
-        logger.error("Error processing request:\n%s", traceback.format_exc())
-        error_msg = f"❌ **Error processing request:**\n`{e}`"
+        logger.error("Request failed (%s)", type(e).__name__)
+        error_msg = "❌ Request failed. Please check the service configuration."
         try:
             send_message(chat_id, error_msg)
         except Exception as notify_err:
-            logger.warning("Failed to send error notification to user: %s", notify_err)
-        return {"status": "error", "reason": str(e)}
+            logger.warning("Failed to send error notification")
+        return {"status": "error", "reason": "Request failed"}
 
 
 @app.get("/")

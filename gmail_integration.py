@@ -7,6 +7,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google_auth_httplib2 import AuthorizedHttp
 import httplib2
+from email_validation import validate_email
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ def create_draft(subject: str, body: str, to_email: str = "") -> dict:
     Returns:
         The Gmail API draft resource dict (contains the draft ``id``).
     """
+    validate_email(subject, body, to_email, False)
     service = get_gmail_service()
 
     message = EmailMessage()
@@ -87,6 +89,7 @@ def send_email(subject: str, body: str, to_email: str) -> dict:
     Returns:
         The Gmail API message resource dict (contains message ``id``).
     """
+    validate_email(subject, body, to_email, True)
     if not to_email or not to_email.strip():
         raise ValueError("A recipient email address (to_email) is required to send an email.")
 

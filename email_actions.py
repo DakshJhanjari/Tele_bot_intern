@@ -21,7 +21,7 @@ _requests = {}
 def perform(action, params):
     expected = os.environ.get('A2A_EMAIL_ACTION_TOKEN', '')
     supplied = params.get('token', '')
-    if not expected or not isinstance(supplied, str) or not hmac.compare_digest(expected, supplied):
+    if not expected or not isinstance(supplied, str) or not hmac.compare_digest(expected.encode(), supplied.encode()):
         raise ValueError('Email actions are not authorized.')
     if action not in ('save', 'send'):
         raise ValueError('Unknown email action.')
@@ -30,6 +30,9 @@ def perform(action, params):
     key = params.get('request_id')
     if not isinstance(key, str) or not key or len(key) > 120:
         raise ValueError('A unique request_id is required.')
+    draft_id = params.get("draft_id")
+    if draft_id is not None and (not isinstance(draft_id, str) or not draft_id or len(draft_id) > 256):
+        raise ValueError("Invalid draft_id.")
     digest = hashlib.sha256(json.dumps([action, subject, body, recipient, params.get('draft_id')]).encode()).hexdigest()
     with _lock:
         previous = _requests.get(key)
@@ -40,6 +43,8 @@ def perform(action, params):
         # Retain one day. The caller keeps a durable claim even across our restarts.
         for old in [k for k,v in _requests.items() if v['time'] < time.time()-86400]:
             del _requests[old]
+        if len(_requests) >= 10000:
+            raise ValueError("Email action capacity reached.")
         _requests[key] = {'digest': digest, 'time': time.time(),
                           'result': {'success': False, 'state': 'in_progress_or_uncertain'}}
     # Never automatically retry a write whose result may already have reached Gmail.

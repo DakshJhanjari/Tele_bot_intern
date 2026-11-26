@@ -132,12 +132,12 @@ async def _handle_tasks_send(rpc_id, params: dict):
     except ValueError as exc:
         logger.warning("[A2A] tasks/send invalid params: %s", exc)
         error = dict(_INVALID_PARAMS)
-        error["data"] = str(exc)
+        error["data"] = "Request could not be processed"
         return _error_response(rpc_id, error)
     except Exception as exc:
-        logger.exception("[A2A] tasks/send internal error: %s", exc)
+        logger.error("A2A send failed (%s)", type(exc).__name__)
         error = dict(_INTERNAL_ERROR)
-        error["data"] = str(exc)
+        error["data"] = "Request could not be processed"
         return _error_response(rpc_id, error)
 
 
@@ -152,16 +152,16 @@ async def _handle_tasks_get(rpc_id, params: dict):
         })
     except ValueError as exc:
         error = dict(_INVALID_PARAMS)
-        error["data"] = str(exc)
+        error["data"] = "Request could not be processed"
         return _error_response(rpc_id, error)
     except KeyError as exc:
         error = dict(_TASK_NOT_FOUND)
-        error["data"] = str(exc)
+        error["data"] = "Request could not be processed"
         return _error_response(rpc_id, error)
     except Exception as exc:
-        logger.exception("[A2A] tasks/get internal error: %s", exc)
+        logger.error("A2A get failed (%s)", type(exc).__name__)
         error = dict(_INTERNAL_ERROR)
-        error["data"] = str(exc)
+        error["data"] = "Request could not be processed"
         return _error_response(rpc_id, error)
 
 
@@ -173,12 +173,12 @@ def _handle_tasks_send_subscribe(rpc_id, params: dict):
                 yield chunk
         except Exception as exc:
             import json
-            logger.exception("[A2A] tasks/sendSubscribe error: %s", exc)
+            logger.error("A2A stream failed (%s)", type(exc).__name__)
             # Send a final error event before closing
             error_payload = {
                 "jsonrpc": "2.0",
                 "id": rpc_id,
-                "error": {**_INTERNAL_ERROR, "data": str(exc)},
+                "error": {**_INTERNAL_ERROR, "data": "Request could not be processed"},
             }
             yield f"event: error\ndata: {json.dumps(error_payload)}\n\n"
 

@@ -61,7 +61,7 @@ def send_message(
     except requests.HTTPError as exc:
         # If Markdown parsing fails due to unescaped characters in AI draft, retry as plain text
         if parse_mode and response.status_code == 400 and "can't parse entities" in response.text:
-            logger.warning("Telegram parse error, retrying without parse_mode: %s", response.text)
+            logger.warning("Telegram parse error, retrying as plain text")
             payload.pop("parse_mode", None)
             retry_res = requests.post(_api_url("sendMessage"), json=payload, timeout=10)
             retry_res.raise_for_status()
@@ -105,7 +105,7 @@ def edit_message_text(
         response.raise_for_status()
     except requests.HTTPError as exc:
         if parse_mode and response.status_code == 400 and "can't parse entities" in response.text:
-            logger.warning("Telegram edit parse error, retrying without parse_mode: %s", response.text)
+            logger.warning("Telegram edit parse error, retrying as plain text")
             payload.pop("parse_mode", None)
             retry_res = requests.post(_api_url("editMessageText"), json=payload, timeout=10)
             retry_res.raise_for_status()
@@ -159,7 +159,13 @@ def download_file(file_id: str) -> bytes:
 
     # Step 2 — download the actual bytes
     download_url = f"https://api.telegram.org/file/bot{_get_token()}/{file_path}"
-    file_res = requests.get(download_url, timeout=30)
-    file_res.raise_for_status()
-
-    return file_res.content
+    with requests.get(download_url, timeout=30, stream=True, allow_redirects=False) as file_res:
+        file_res.raise_for_status()
+        if file_res.status_code != 200:
+            raise ValueError("Unexpected file response")
+        content = bytearray()
+        for chunk in file_res.iter_content(8192):
+            content.extend(chunk)
+            if len(content) > 10 * 1024 * 1024:
+                raise ValueError("Image exceeds 10 MB")
+        return bytes(content)

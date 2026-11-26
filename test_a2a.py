@@ -11,10 +11,16 @@ Or against a deployed instance:
 """
 
 import argparse
+import os
 import json
 import uuid
 
 import requests
+
+# All account-backed A2A requests now require authentication.
+_session = requests.Session()
+if os.environ.get("A2A_EMAIL_ACTION_TOKEN"):
+    _session.headers["Authorization"] = "Bearer " + os.environ["A2A_EMAIL_ACTION_TOKEN"]
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 
@@ -45,7 +51,7 @@ def test_agent_card(base_url: str):
     print_section("1. Agent Card Discovery")
     url = f"{base_url}/.well-known/agent.json"
     print(f"GET {url}")
-    resp = requests.get(url, timeout=10)
+    resp = _session.get(url, timeout=10)
     resp.raise_for_status()
     card = resp.json()
     print(json.dumps(card, indent=2))
@@ -75,7 +81,7 @@ def test_tasks_send(base_url: str) -> str:
     }
     print(f"POST {url}")
     print(f"Task ID: {task_id}")
-    resp = requests.post(url, json=payload, timeout=60)
+    resp = _session.post(url, json=payload, timeout=60)
     resp.raise_for_status()
     data = resp.json()
     print(json.dumps(data, indent=2))
@@ -98,7 +104,7 @@ def test_tasks_get(base_url: str, task_id: str):
         "params": {"id": task_id},
     }
     print(f"POST {url}")
-    resp = requests.post(url, json=payload, timeout=10)
+    resp = _session.post(url, json=payload, timeout=10)
     resp.raise_for_status()
     data = resp.json()
     print(json.dumps(data, indent=2))
@@ -126,7 +132,7 @@ def test_tasks_send_subscribe(base_url: str):
     }
     print(f"POST {url} (streaming)")
     events = []
-    with requests.post(url, json=payload, stream=True, timeout=90) as resp:
+    with _session.post(url, json=payload, stream=True, timeout=90) as resp:
         resp.raise_for_status()
         for line in resp.iter_lines():
             if line:
@@ -147,7 +153,7 @@ def test_method_not_found(base_url: str):
         "method": "tasks/nonexistent",
         "params": {},
     }
-    resp = requests.post(url, json=payload, timeout=10)
+    resp = _session.post(url, json=payload, timeout=10)
     data = resp.json()
     print(json.dumps(data, indent=2))
     assert "error" in data

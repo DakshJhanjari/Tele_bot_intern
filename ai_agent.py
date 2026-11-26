@@ -25,7 +25,6 @@ class DraftResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 _client: genai.Client | None = None
-_resume_cache: str | None = None
 
 # Stable defaults with a configured primary model when provided.
 FALLBACK_MODELS = list(dict.fromkeys(filter(None, [
@@ -49,16 +48,29 @@ def _get_client() -> genai.Client:
 
 
 def _get_resume() -> str:
-    """Return the resume text, fetching from the Gist only on first call."""
-    global _resume_cache
-    if _resume_cache is None:
-        url = os.environ.get("RESUME_GIST_URL")
-        if not url:
-            raise ValueError("RESUME_GIST_URL is not set.")
-        response = requests.get(url, timeout=10)
+    """Fetch the latest unpinned Gist on every generation; never serve stale content."""
+    from urllib.parse import urlsplit
+    import re
+    url = os.environ.get("RESUME_GIST_URL", "https://gist.githubusercontent.com/DakshJhanjari/6700e1da879449ad083d486f004d5248/raw")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or parsed.netloc != "gist.githubusercontent.com"
+            or parsed.query or parsed.fragment
+            or not re.fullmatch(r"/[A-Za-z0-9_-]+/[a-fA-F0-9]+/raw(?:/[^/]+)?", parsed.path)):
+        raise ValueError("RESUME_GIST_URL must be an unpinned raw GitHub Gist URL.")
+    with requests.get(url, timeout=10, stream=True, allow_redirects=False,
+                      headers={"Cache-Control": "no-cache"}) as response:
         response.raise_for_status()
-        _resume_cache = response.text
-    return _resume_cache
+        if response.status_code != 200:
+            raise ValueError("Resume fetch did not return content.")
+        content = bytearray()
+        for chunk in response.iter_content(8192):
+            content.extend(chunk)
+            if len(content) > 100_000:
+                raise ValueError("Resume exceeds 100 KB.")
+        text = content.decode("utf-8")
+        if not text.strip():
+            raise ValueError("Resume is empty.")
+        return text
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +151,10 @@ def generate_email_draft(
                         response_schema=DraftResponse,
                     ),
                 )
-                return DraftResponse.model_validate_json(response.text)
+                draft = DraftResponse.model_validate_json(response.text)
+                from email_validation import validate_email
+                validate_email(draft.subject, draft.body, draft.recruiter_email, False)
+                return draft
             except Exception as exc:
                 last_error = exc
                 err_str = str(exc)
@@ -147,12 +162,12 @@ def generate_email_draft(
                     logger.warning(
                         "Model %s error (%s). Trying fallback...",
                         model_name,
-                        err_str[:120],
+                        type(exc).__name__,
                     )
                     time.sleep(1)
                     break  # Move immediately to next candidate model
                 else:
-                    logger.warning("Generation error on %s: %s", model_name, exc)
+                    logger.warning("Generation failed on %s (%s)", model_name, type(exc).__name__)
                     break
 
     raise last_error or RuntimeError("Failed to generate draft across all fallback models.")

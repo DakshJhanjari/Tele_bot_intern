@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+import threading
 from enum import Enum
 from typing import Any, Literal
 
@@ -162,6 +163,7 @@ AGENT_CARD: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 _TASK_STORE: dict[str, Task] = {}
+_TASK_LOCK = threading.Lock()
 
 
 def get_task(task_id: str) -> Task | None:
@@ -169,7 +171,10 @@ def get_task(task_id: str) -> Task | None:
 
 
 def save_task(task: Task) -> None:
-    _TASK_STORE[task.id] = task
+    with _TASK_LOCK:
+        if task.id not in _TASK_STORE and len(_TASK_STORE) >= 1000:
+            raise ValueError("Task capacity reached; restart after reviewing stored tasks.")
+        _TASK_STORE[task.id] = task
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +199,7 @@ class A2AHandler:
     def handle_get(self, params: dict[str, Any]) -> Task:
         """Handle a ``tasks/get`` request."""
         task_id = params.get("id")
-        if not task_id:
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 128:
             raise ValueError("Missing task id")
         task = get_task(task_id)
         if task is None:
@@ -215,7 +220,7 @@ class A2AHandler:
         yield self._sse_event("task_status_update", task)
 
         # Execute the actual work
-        self._execute(task)
+        self._execute(task, save_draft=params.get("save_draft", True) is not False)
         save_task(task)
 
         # Yield each artifact
@@ -237,11 +242,19 @@ class A2AHandler:
         task_id = params.get("id") or str(uuid.uuid4())
         session_id = params.get("sessionId")
 
+        if not isinstance(task_id, str) or len(task_id) > 128:
+            raise ValueError("Invalid task id")
+        if get_task(task_id) is not None:
+            raise ValueError("Task id already exists")
         raw_message = params.get("message", {})
+        if not isinstance(raw_message, dict) or not isinstance(raw_message.get("parts", []), list):
+            raise ValueError("Invalid message")
         role = raw_message.get("role", "user")
         raw_parts = raw_message.get("parts", [])
         parts: list[Part] = []
         for p in raw_parts:
+            if not isinstance(p, dict):
+                raise ValueError("Invalid message part")
             if p.get("type") == "text":
                 parts.append(TextPart(text=p.get("text", "")))
             elif p.get("type") == "data":
@@ -316,12 +329,12 @@ class A2AHandler:
             ]
 
         except Exception as exc:
-            logger.exception("[A2A] Task %s failed: %s", task.id, exc)
+            logger.error("A2A task failed (%s)", type(exc).__name__)
             task.status = TaskStatus(
                 state=TaskState.FAILED,
                 message=Message(
                     role="agent",
-                    parts=[TextPart(text=f"Error: {exc}")],
+                    parts=[TextPart(text="Draft generation failed. Check service configuration.")],
                 ),
             )
 
