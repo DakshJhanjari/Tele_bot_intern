@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Request  # noqa: E402
+from starlette.concurrency import run_in_threadpool
 
-from ai_agent import generate_email_draft  # noqa: E402
+from ai_agent import generate_email_draft, UnusableJobDescription  # noqa: E402
 from gmail_integration import create_draft, send_email  # noqa: E402
 from telegram_integration import (  # noqa: E402
     send_message,
@@ -164,7 +165,9 @@ async def handle_callback_query(callback_query: dict):
         elif action == "regen":
             answer_callback_query(query_id, text="🔄 Regenerating draft with Gemini...")
             job_text = draft.get("job_text", "")
-            new_draft = generate_email_draft(job_description_text=job_text)
+            screenshot = await run_in_threadpool(download_file, draft["screenshot_file_id"])
+            new_draft = await run_in_threadpool(
+                generate_email_draft, job_text, screenshot, require_job_description=True)
 
             # Update cache with new generated draft
             _PENDING_DRAFTS[draft_id]["subject"] = new_draft.subject
@@ -193,7 +196,13 @@ async def handle_callback_query(callback_query: dict):
             answer_callback_query(query_id, text="Unknown action.")
             return {"status": "unknown_action"}
 
+    except UnusableJobDescription:
+        draft["claimed"] = False
+        answer_callback_query(query_id, text="Please send a clearer job description screenshot.", show_alert=True)
+        return {"status": "needs_clearer_screenshot"}
     except Exception as exc:
+        if draft and action == "regen":
+            draft["claimed"] = False
         logger.error("Callback failed (%s)", type(exc).__name__)
         answer_callback_query(query_id, text="❌ Action failed. Check Gmail before trying again.", show_alert=True)
         return {"status": "error", "reason": "Action failed"}
@@ -274,34 +283,32 @@ async def telegram_webhook(request: Request):
     if job_text in ("/start", "/help"):
         welcome_msg = (
             "👋 *Welcome to Cold Email Drafter Bot!*\n\n"
-            "Send me any *Job Description* (as text or screenshot), and I will:\n"
-            "1. Match it with your resume\n"
+            "Send a *screenshot of a job description*, and I will:\n"
+            "1. Check the screenshot contains a readable job description and match it with your resume\n"
             "2. Draft a personalized, persuasive cold email\n"
             "3. Show you a *Preview* with interactive buttons:\n"
             "   • 📧 *Send Email* directly to the recruiter\n"
             "   • 💾 *Save as Draft* to your Gmail\n"
             "   • 🔄 *Regenerate* for a fresh draft variation\n"
             "   • ❌ *Discard* the draft\n\n"
-            "Ready when you are! Send a job post to get started."
+            "Send a LinkedIn job screenshot to get started. Optional instructions can go in its caption."
         )
         send_message(chat_id, welcome_msg)
         return {"status": "ok"}
 
-    send_message(chat_id, "⚙️ Processing your job description. Drafting email now...")
+    if not photos:
+        send_message(chat_id, "Send a job description screenshot to create an email preview. You can add instructions in the image caption.", parse_mode=None)
+        return {"status": "screenshot_required"}
+
+    send_message(chat_id, "⚙️ Checking your job description screenshot...")
 
     image_bytes = None
     try:
-        if photos:
-            # Telegram provides photo sizes in ascending order — take the largest
-            file_id = photos[-1]["file_id"]
-            image_bytes = download_file(file_id)
-
-        if not job_text and not image_bytes:
-            send_message(chat_id, "Please send a job description text or a screenshot.")
-            return {"status": "error", "reason": "No content"}
-
-        # 1. Generate the draft via Gemini
-        draft_response = generate_email_draft(job_text, image_bytes)
+        # Telegram photo variants are ordered by size; preserve the source for Regenerate.
+        screenshot_file_id = photos[-1]["file_id"]
+        image_bytes = await run_in_threadpool(download_file, screenshot_file_id)
+        draft_response = await run_in_threadpool(
+            generate_email_draft, job_text, image_bytes, require_job_description=True)
 
         # 2. Store in pending drafts for button interactions
         _cleanup_old_drafts()
@@ -313,6 +320,7 @@ async def telegram_webhook(request: Request):
             "body": draft_response.body,
             "recruiter_email": draft_response.recruiter_email,
             "job_text": job_text,
+            "screenshot_file_id": screenshot_file_id,
             "created_at": time.time(),
             "chat_id": chat_id,
             "actor_id": message.get("from", {}).get("id"),
@@ -329,6 +337,9 @@ async def telegram_webhook(request: Request):
 
         return {"status": "ok"}
 
+    except UnusableJobDescription:
+        send_message(chat_id, "I couldn't find a usable job description in that image. Please send a clearer screenshot showing the role and responsibilities or requirements.", parse_mode=None)
+        return {"status": "needs_clearer_screenshot"}
     except Exception as e:
         logger.error("Request failed (%s)", type(e).__name__)
         error_msg = "❌ Request failed. Please check the service configuration."
